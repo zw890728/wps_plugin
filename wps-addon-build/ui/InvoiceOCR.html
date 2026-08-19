@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>发票识别</title>
+<script type="text/javascript" src="../js/util.js"></script>
+<script type="text/javascript" src="../js/InvoiceOCR.js"></script>
+</head>
+<body>
+<div class="global">
+    <!-- 1. API 配置 -->
+    <div class="card">
+        <div class="cardTitle">百度 OCR API 配置</div>
+        <div class="row">
+            <label for="inpApiKey">API Key</label>
+            <input id="inpApiKey" type="text" placeholder="百度 OCR API Key">
+        </div>
+        <div class="row">
+            <label for="inpSecretKey">Secret Key</label>
+            <input id="inpSecretKey" type="password" placeholder="百度 OCR Secret Key">
+        </div>
+        <div class="row">
+            <button id="btnSaveCfg" type="button" class="smallBtn">保存配置</button>
+            <span id="cfgStatus" class="hint"></span>
+        </div>
+        <div class="hint">提示：保存配置后，关闭此窗口，点击 Ribbon「发票识别」按钮会自动测试连通性</div>
+    </div>
+
+    <!-- 2. 文件选择 -->
+    <div class="card">
+        <div class="cardTitle">选择发票文件</div>
+        <div class="row">
+            <input id="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff" multiple>
+        </div>
+        <div class="hint">支持 PDF（自动识别所有页）和图片。可多选。</div>
+        <div id="fileList" class="fileList"></div>
+    </div>
+
+    <!-- 3. 操作 -->
+    <div class="card">
+        <div class="cardTitle">识别操作</div>
+        <div class="row">
+            <button id="btnPrepare" type="button" class="primary">准备识别</button>
+            <button id="btnClear" type="button" class="smallBtn">清空</button>
+        </div>
+        <div id="status" class="status"></div>
+        <div id="progress" class="progress"></div>
+    </div>
+
+    <!-- 4. 结果 -->
+    <div class="card" id="resultCard" style="display:none;">
+        <div class="cardTitle">处理结果</div>
+        <div id="resultSummary" class="resultSummary"></div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var cfg = loadInvoiceConfig();
+    document.getElementById("inpApiKey").value = cfg.apiKey || "";
+    document.getElementById("inpSecretKey").value = cfg.secretKey || "";
+
+    // ---------- 保存配置 ----------
+    document.getElementById("btnSaveCfg").onclick = function () {
+        var newCfg = loadInvoiceConfig();
+        newCfg.apiKey = document.getElementById("inpApiKey").value.trim();
+        newCfg.secretKey = document.getElementById("inpSecretKey").value.trim();
+        saveInvoiceConfig(newCfg);
+        document.getElementById("cfgStatus").textContent = "配置已保存";
+        setTimeout(function () { document.getElementById("cfgStatus").textContent = ""; }, 2000);
+    };
+
+    // ---------- 文件列表 ----------
+    var selectedFiles = [];
+    var fileDataList = []; // {name, type, data: base64String}
+
+    document.getElementById("fileInput").onchange = function (e) {
+        selectedFiles = [];
+        fileDataList = [];
+        for (var i = 0; i < e.target.files.length; i++) {
+            selectedFiles.push(e.target.files[i]);
+        }
+        renderFileList();
+    };
+
+    function renderFileList() {
+        var list = document.getElementById("fileList");
+        if (selectedFiles.length === 0) {
+            list.innerHTML = '<span class="hint">未选择文件</span>';
+            return;
+        }
+        var html = '<table class="fileTable"><tr><th>#</th><th>文件名</th><th>类型</th><th>大小</th></tr>';
+        for (var i = 0; i < selectedFiles.length; i++) {
+            var f = selectedFiles[i];
+            var ext = (f.name.split(".").pop() || "").toLowerCase();
+            var typeLabel = ext === "pdf" ? "PDF" : "图片";
+            var sizeKB = (f.size / 1024).toFixed(1);
+            html += '<tr><td>' + (i + 1) + '</td><td>' + f.name + '</td><td>' + typeLabel + '</td><td>' + sizeKB + ' KB</td></tr>';
+        }
+        html += '</table>';
+        list.innerHTML = html;
+    }
+
+    // ---------- 工具函数 ----------
+    function setStatus(msg) { document.getElementById("status").textContent = msg; }
+    function setProgress(msg) { document.getElementById("progress").textContent = msg; }
+
+    // 文件读为 Base64
+    function readFileAsBase64(file) {
+        return new Promise(function (resolve, reject) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                var arr = new Uint8Array(reader.result);
+                var binary = "";
+                var CHUNK = 0x8000;
+                for (var i = 0; i < arr.length; i += CHUNK) {
+                    binary += String.fromCharCode.apply(null, arr.slice(i, i + CHUNK));
+                }
+                resolve(btoa(binary));
+            };
+            reader.onerror = function () { reject(new Error("文件读取失败")); };
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    // PDF.js 动态加载
+    var _pdfjsLoading = null;
+    function loadPDFJS() {
+        if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+        if (_pdfjsLoading) return _pdfjsLoading;
+        _pdfjsLoading = new Promise(function (resolve, reject) {
+            var script = document.createElement("script");
+            script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+            script.onload = function () {
+                if (window.pdfjsLib) {
+                    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+                    resolve(window.pdfjsLib);
+                } else {
+                    reject(new Error("PDF.js 加载失败"));
+                }
+            };
+            script.onerror = function () { reject(new Error("PDF.js CDN 加载失败，请检查网络")); };
+            document.head.appendChild(script);
+        });
+        return _pdfjsLoading;
+    }
+
+    // PDF → 图片 base64 数组
+    function pdfToImages(pdfBase64) {
+        return loadPDFJS().then(function (pdfjsLib) {
+            var loadingTask = pdfjsLib.getDocument({ data: atob(pdfBase64) });
+            return loadingTask.promise.then(function (pdf) {
+                var numPages = pdf.numPages;
+                var images = [];
+                var chain = Promise.resolve();
+                for (var i = 1; i <= numPages; i++) {
+                    (function (pageNum) {
+                        chain = chain.then(function () {
+                            return pdf.getPage(pageNum).then(function (page) {
+                                var viewport = page.getViewport({ scale: 1.5 });
+                                var canvas = document.createElement("canvas");
+                                canvas.width = viewport.width;
+                                canvas.height = viewport.height;
+                                var ctx = canvas.getContext("2d");
+                                var renderTask = page.render({ canvasContext: ctx, viewport: viewport });
+                                return renderTask.promise.then(function () {
+                                    var dataUrl = canvas.toDataURL("image/png");
+                                    var base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+                                    images.push({ page: pageNum, base64: base64 });
+                                    setProgress("渲染 PDF 第 " + pageNum + "/" + numPages + " 页");
+                                });
+                            });
+                        });
+                    })(i);
+                }
+                return chain.then(function () { return { images: images, numPages: numPages }; });
+            });
+        });
+    }
+
+    // ---------- 准备识别 ----------
+    document.getElementById("btnPrepare").onclick = async function () {
+        if (selectedFiles.length === 0) {
+            alert("请先选择文件");
+            return;
+        }
+        var btn = document.getElementById("btnPrepare");
+        btn.disabled = true;
+        btn.textContent = "处理中...";
+        setStatus("准备中...");
+        setProgress("");
+
+        try {
+            // 保存配置
+            var newCfg = loadInvoiceConfig();
+            newCfg.apiKey = document.getElementById("inpApiKey").value.trim();
+            newCfg.secretKey = document.getElementById("inpSecretKey").value.trim();
+            saveInvoiceConfig(newCfg);
+
+            var pendingFiles = [];
+
+            for (var idx = 0; idx < selectedFiles.length; idx++) {
+                var file = selectedFiles[idx];
+                var fileName = file.name;
+                var ext = (fileName.split(".").pop() || "").toLowerCase();
+                setStatus("处理中 [" + (idx + 1) + "/" + selectedFiles.length + "]: " + fileName);
+
+                var base64 = await readFileAsBase64(file);
+
+                if (ext === "pdf") {
+                    setProgress("正在加载 PDF.js...");
+                    try {
+                        var result = await pdfToImages(base64);
+                        for (var p = 0; p < result.images.length; p++) {
+                            pendingFiles.push({
+                                name: fileName + " (第" + result.images[p].page + "页)",
+                                type: "image",
+                                data: result.images[p].base64
+                            });
+                        }
+                    } catch (pdfErr) {
+                        // PDF.js 失败，回退：直接用 PDF base64（仅首页）
+                        setProgress("PDF.js 不可用，回退直接识别首页");
+                        pendingFiles.push({
+                            name: fileName + " (仅首页)",
+                            type: "pdf",
+                            data: base64
+                        });
+                    }
+                } else {
+                    pendingFiles.push({
+                        name: fileName,
+                        type: "image",
+                        data: base64
+                    });
+                }
+            }
+
+            // 存入 PluginStorage
+            var payload = { files: pendingFiles };
+            try {
+                window.Application.PluginStorage.setItem("invoice_ocr_pending", JSON.stringify(payload));
+                setStatus("准备完成！请点击 Ribbon「发票识别」按钮开始识别");
+                setProgress("共 " + pendingFiles.length + " 个待识别项");
+                document.getElementById("resultCard").style.display = "block";
+                document.getElementById("resultSummary").innerHTML =
+                    '<div class="ok">准备完成！共 ' + pendingFiles.length + ' 个待识别项</div>' +
+                    '<div class="hint">请关闭此窗口后，点击 Ribbon「发票识别」按钮开始识别</div>';
+            } catch (storeErr) {
+                setStatus("存储失败: " + storeErr.message);
+                setProgress("数据量可能过大，请减少文件数量或使用更小的文件");
+            }
+        } catch (e) {
+            setStatus("处理失败: " + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "准备识别";
+        }
+    };
+
+    // ---------- 清空 ----------
+    document.getElementById("btnClear").onclick = function () {
+        selectedFiles = [];
+        fileDataList = [];
+        document.getElementById("fileInput").value = "";
+        document.getElementById("status").textContent = "";
+        document.getElementById("progress").textContent = "";
+        document.getElementById("resultCard").style.display = "none";
+        renderFileList();
+    };
+})();
+</script>
+
+<style>
+* { box-sizing: border-box; }
+body {
+    margin: 0; padding: 12px;
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+    font-size: 13px; color: #333;
+    background: #f5f6f8;
+}
+.global { max-width: 720px; margin: 0 auto; }
+.card {
+    background: #fff; border: 1px solid #e0e0e0; border-radius: 6px;
+    padding: 12px 14px; margin-bottom: 12px;
+}
+.cardTitle {
+    font-size: 14px; font-weight: 600; color: #1a73e8;
+    margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #eee;
+}
+.row { margin: 8px 0; display: flex; align-items: center; gap: 8px; }
+.row label { min-width: 80px; font-size: 13px; color: #555; }
+.row input[type="text"], .row input[type="password"] {
+    flex: 1; padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px;
+    font-size: 13px;
+}
+.row input[type="file"] { flex: 1; font-size: 13px; }
+.hint { font-size: 12px; color: #888; }
+.status { font-size: 13px; color: #1a73e8; margin: 6px 0; }
+.progress { font-size: 12px; color: #666; margin: 4px 0; }
+button {
+    padding: 6px 16px; border: 1px solid #ccc; border-radius: 4px;
+    background: #f8f8f8; cursor: pointer; font-size: 13px;
+}
+button:hover { background: #eee; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary {
+    background: #1a73e8; color: #fff; border-color: #1a73e8;
+}
+button.primary:hover { background: #1558b0; }
+button.smallBtn { padding: 4px 10px; font-size: 12px; }
+.fileTable, .resultTable {
+    width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px;
+}
+.fileTable th, .fileTable td {
+    border: 1px solid #ddd; padding: 4px 8px; text-align: left;
+}
+.fileTable th { background: #f0f0f0; }
+.resultSummary .ok { color: #2e7d32; margin: 2px 0; }
+.resultSummary .err { color: #c62828; margin: 2px 0; }
+</style>
+</body>
+</html>

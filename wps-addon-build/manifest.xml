@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<JsPlugin>
+  <ApiVersion>1.0.0</ApiVersion>
+  <Name>ZW</Name>
+  <Description>曾崴的自定义函数</Description>
+  <Functions>
+    <Uri>/functions.json</Uri>
+    <Namespace>ZW</Namespace>
+  </Functions>
+</JsPlugin>

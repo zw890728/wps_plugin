@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Chance 随机填充</title>
+<script type="text/javascript" src="../js/util.js"></script>
+<script type="text/javascript" src="../js/Lodash.js"></script>
+<script type="text/javascript" src="../js/Dayjs.js"></script>
+<script type="text/javascript" src="../js/Chance.js"></script>
+<script type="text/javascript" src="../js/ChanceFill.js"></script>
+</head>
+<body>
+<div class="global">
+    <!-- 1. 用法说明 -->
+    <div class="helpCard">
+        <div class="helpTitle">使用说明</div>
+        <div class="helpBody">
+            ① 在左侧依次选择 <b>类别</b> → <b>可用函数</b>，下方动态显示该函数的可配参数（默认值已参考 <code>test/test_Chance.js</code>）。<br> 
+            ② <b>输出位置</b> 默认为当前选区（<code>Selection</code>）；可改为「自定义区域」，输入形如 <code>A1:C10</code> 的地址。<br>
+            ③ <b>填充数量</b>：单格/单行选区 → 横向铺 N 个；单列选区 → 纵向铺 N 个；多行多列选区 → 按行优先填充。<br>
+            ④ 勾选「跳过非空单元格」可避免覆盖已有数据。<br>
+            ⑤ 部分函数（如 <code>mrz</code>、<code>vat</code>、<code>iban</code>、<code>HIDN</code>）在当前 Chance.js 版本下可能不可用，失败时状态栏会显示 <code>[跳过] 函数名: 错误信息</code>，不会中断其他生成。<br>
+            ⑥ 函数返回对象/数组时，将自动 <code>JSON.stringify</code> 后写入单元格。
+        </div>
+    </div>
+
+    <div class="main">
+        <!-- 左：分类 / 函数 / 参数 -->
+        <div class="leftPanel">
+            <div class="row">
+                <label for="selCategory">类别</label>
+                <select id="selCategory"></select>
+            </div>
+            <div class="row">
+                <label for="selFunction">可用函数</label>
+                <select id="selFunction"></select>
+            </div>
+            <div class="funcDesc" id="funcDesc"></div>
+            <div class="paramPanel" id="paramPanel"></div>
+        </div>
+
+        <!-- 右：输出选项 + 预览 -->
+        <div class="rightPanel">
+            <div class="row">
+                <label for="inpCount">填充数量</label>
+                <input id="inpCount" type="number" value="10" min="1" max="10000">
+            </div>
+            <div class="row">
+                <label>输出位置</label>
+                <div class="radioGroup">
+                    <label><input type="radio" name="outmode" value="selection" checked> 选区</label>
+                    <label><input type="radio" name="outmode" value="custom"> 自定义</label>
+                </div>
+            </div>
+            <div class="row customRow" id="customRow" style="display:none">
+                <label for="inpRange">区域地址</label>
+                <div class="inputWithBtn">
+                    <input id="inpRange" type="text" placeholder="A1:C10 或 $A$1:$C$10">
+                    <button id="btnPick" type="button">选择…</button>
+                </div>
+            </div>
+            <div class="row">
+                <label>选项</label>
+                <div class="checkbox">
+                    <label><input type="checkbox" id="chkSkip" checked> 跳过非空单元格</label>
+                    <label><input type="checkbox" id="chkConfirm" checked> 写入前确认</label>
+                </div>
+            </div>
+            <div class="previewBox">
+                <div class="previewTitle">预览（生成 1 条样本）</div>
+                <pre id="previewOut">—</pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="actions">
+        <button id="btnPreview" type="button">仅预览</button>
+        <button id="btnRun" class="primary" type="button">生成并写入</button>
+        <button id="btnCancel" type="button">取消</button>
+    </div>
+
+    <!-- 状态栏 -->
+    <div class="statusBar" id="statusBar">就绪。</div>
+</div>
+</body>
+
+<style>
+.global {
+    font-size: 14px;
+    font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    padding: 10px 14px 14px;
+    color: #222;
+}
+.helpCard {
+    background: #f5f6f8;
+    border: 1px solid #e2e4e8;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    line-height: 1.6;
+}
+.helpTitle {
+    font-weight: bold;
+    margin-bottom: 6px;
+    color: #333;
+}
+.helpBody code {
+    background: #eef1f4;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-family: Consolas, "Courier New", monospace;
+    color: #c7254e;
+}
+.main {
+    display: flex;
+    gap: 14px;
+}
+.leftPanel, .rightPanel {
+    flex: 1;
+    border: 1px solid #e2e4e8;
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+.row {
+    margin-bottom: 8px;
+    display: flex;
+    align-items: flex-start;
+}
+.row label {
+    width: 80px;
+    flex-shrink: 0;
+    padding-top: 6px;
+    color: #444;
+}
+.row select,
+.row input[type="text"],
+.row input[type="number"] {
+    flex: 1;
+    padding: 5px 7px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 13px;
+    box-sizing: border-box;
+}
+.funcDesc {
+    margin: -4px 0 8px 80px;
+    padding: 4px 8px;
+    background: #fffbe6;
+    border-left: 3px solid #e8c36a;
+    font-size: 12.5px;
+    color: #6b5b1f;
+    line-height: 1.5;
+    border-radius: 2px;
+}
+.paramPanel {
+    margin-left: 0;
+}
+.paramRow {
+    display: flex;
+    margin-bottom: 6px;
+    align-items: center;
+}
+.paramRow label {
+    width: 110px;
+    flex-shrink: 0;
+    color: #555;
+    font-size: 12.5px;
+}
+.paramRow select,
+.paramRow input[type="text"],
+.paramRow input[type="number"] {
+    flex: 1;
+    padding: 4px 6px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font-size: 12.5px;
+    box-sizing: border-box;
+}
+.paramRow input[type="checkbox"] {
+    margin-right: 4px;
+}
+.paramHint {
+    margin-left: 110px;
+    margin-top: -4px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: #888;
+    line-height: 1.4;
+}
+.radioGroup {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding-top: 4px;
+}
+.radioGroup label,
+.checkbox label {
+    width: auto;
+    padding-top: 0;
+    cursor: pointer;
+    color: #444;
+    margin-right: 6px;
+}
+.checkbox {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 4px;
+}
+.inputWithBtn {
+    flex: 1;
+    display: flex;
+    gap: 6px;
+}
+.inputWithBtn input { flex: 1; }
+.inputWithBtn button {
+    padding: 4px 10px;
+    border: 1px solid #aaa;
+    background: #fafafa;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.inputWithBtn button:hover { background: #eee; }
+.previewBox {
+    margin-top: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fafafa;
+    padding: 6px 8px;
+}
+.previewTitle {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 4px;
+}
+#previewOut {
+    margin: 0;
+    max-height: 120px;
+    overflow: auto;
+    font-size: 12.5px;
+    font-family: Consolas, "Courier New", monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.actions {
+    text-align: right;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #eee;
+}
+.actions button {
+    min-width: 80px;
+    height: 30px;
+    margin-left: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    border: 1px solid #aaa;
+    background: #fafafa;
+}
+.actions button.primary {
+    background: #6c8bd6;
+    color: #fff;
+    border-color: #5a78c6;
+}
+.actions button:hover { background: #eee; }
+.actions button.primary:hover { background: #5a78c6; }
+.statusBar {
+    margin-top: 10px;
+    padding: 6px 10px;
+    background: #f5f6f8;
+    border: 1px solid #e2e4e8;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #555;
+    max-height: 80px;
+    overflow: auto;
+    line-height: 1.5;
+}
+.statusBar.error { color: #b94a48; border-color: #e2b4b4; background: #fdf2f2; }
+.statusBar.ok { color: #2a7a2a; border-color: #b4d8b4; background: #f2faf2; }
+</style>
+</html>
