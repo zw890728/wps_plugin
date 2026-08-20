@@ -576,7 +576,7 @@
             // 自动获取当前页面的路径，并拼接上你的加载项压缩包名称
             var addonPath = location.href.match(/.+\//)[0] + 'MyTools.7z';
             var addonList = document.getElementById("addonList");
-            var curList = [{"name":"MyTools","addonType":"et","online":"false","multiUser":"false","url":addonPath,"version":"1.0.0","online": "false"}];
+            var curList = [{"name":"MyTools","addonType":"et","online":"false","multiUser":"false","url":addonPath,"version":"1.0.0"}];
             curList.forEach(function (element) {
                 var param = JSON.stringify(element).replace("\"", "\'");
                 UpdateElement(element, 'enable')
