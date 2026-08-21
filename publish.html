@@ -513,7 +513,12 @@
                             alert("配置成功！");
                         }
                         else {
-                            alert("配置失败！");
+                            var errDetail = res.res.target.response;
+                            try {
+                                var errJson = JSON.parse(errDetail);
+                                errDetail = errJson.message || errJson.error || errDetail;
+                            } catch (e) { }
+                            alert("配置失败！" + (errDetail || "服务端未返回有效响应"));
                         }
                     }
                 } else {
@@ -576,7 +581,7 @@
             // 自动获取当前页面的路径，并拼接上你的加载项压缩包名称
             var addonPath = location.href.match(/.+\//)[0] + 'MyTools.7z';
             var addonList = document.getElementById("addonList");
-            var curList = [{"name":"MyTools","addonType":"et","online":"false","multiUser":"false","url":addonPath,"version":"1.0.0"}];
+            var curList = [{"name":"MyTools","addonType":"et","online":"false","multiUser":"false","url":addonPath,"version":"1.0.0","online": "false"}];
             curList.forEach(function (element) {
                 var param = JSON.stringify(element).replace("\"", "\'");
                 UpdateElement(element, 'enable')
